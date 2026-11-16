@@ -1,0 +1,12 @@
+{
+  "platform_url": "https://PARENT_HOST:8010",
+  "node_id": "win-exec-01",
+  "machine_id": "win-server-01",
+  "name": "Windows 执行服务器 01",
+  "slots": 1,
+  "mcp_ids": ["builtin-browser"],
+  "state_dir": "../runtime/remote-nodes/win-exec-01",
+  "token_env": "AIUI_NODE_TOKEN",
+  "ca_file": "../runtime/certs/company-ca.pem",
+  "allow_insecure_http": false
+}

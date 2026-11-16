@@ -1,0 +1,14 @@
+{
+  "id": "playwright-interactive",
+  "name": "Playwright MCP（有界面 / 独立持久会话）",
+  "transport": "stdio",
+  "command": "npx",
+  "args": [
+    "-y",
+    "@playwright/mcp@0.0.85",
+    "--config",
+    "{here}/configs/playwright-interactive.json"
+  ],
+  "env": {},
+  "enabled": true
+}

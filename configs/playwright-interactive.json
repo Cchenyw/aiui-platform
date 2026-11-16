@@ -1,0 +1,25 @@
+{
+  "browser": {
+    "browserName": "chromium",
+    "isolated": false,
+    "userDataDir": "../runtime/browser-profiles/interactive-1",
+    "launchOptions": {
+      "channel": "chrome",
+      "headless": false
+    },
+    "contextOptions": {
+      "locale": "zh-CN",
+      "timezoneId": "Asia/Shanghai",
+      "viewport": {
+        "width": 1280,
+        "height": 720
+      }
+    }
+  },
+  "outputDir": "../runtime/mcp-output/interactive-1",
+  "timeouts": {
+    "action": 10000,
+    "navigation": 60000,
+    "settle": 1000
+  }
+}

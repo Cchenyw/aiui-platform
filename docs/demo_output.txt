@@ -1,0 +1,37 @@
+[testapp] 被测页面已启动 http://127.0.0.1:8081/login
+[platform] 控制面已启动 http://127.0.0.1:8000/  （看板 /api/status）
+① 启动被测页面 ...
+② 启动测试平台 ...
+③ 启动执行机（容量 2）...
+   已注册执行机: [('agent-local-1', 2)]
+
+④ 下发 8 条用例（max_retry=2，其中 1 条故意失败）...
+⑤ 观察调度（每 0.4s 采样：排队/执行/完成，并发峰值）...
+   排队 6 | 执行 2 | 重试 0 | 通过 0 | 失败 0
+   排队 4 | 执行 2 | 重试 0 | 通过 2 | 失败 0
+   排队 4 | 执行 0 | 重试 0 | 通过 4 | 失败 0
+   排队 2 | 执行 2 | 重试 0 | 通过 4 | 失败 0
+   排队 0 | 执行 2 | 重试 0 | 通过 6 | 失败 0
+   排队 0 | 执行 1 | 重试 0 | 通过 7 | 失败 0
+   排队 0 | 执行 0 | 重试 0 | 通过 7 | 失败 1
+
+⑥ 结果
+任务ID            名称                        状态        尝试    执行机             耗时ms    
+T001-bdbb       登录-管理员                    done      0     agent-local-1   2880    
+T002-d338       登录-普通用户                   done      0     agent-local-1   2875    
+T003-5a7a       登录-密码错误                   done      0     agent-local-1   2114    
+T004-f65e       登录-空用户名                   done      0     agent-local-1   2113    
+T005-1628       登录-再次验证                   done      0     agent-local-1   2221    
+T006-9c7e       登录-采集页面正文                 done      0     agent-local-1   2241    
+T007-c787       登录-不同文案                   done      0     agent-local-1   2036    
+T008-4238       异常-元素不存在(预期失败)            failed    3     agent-local-1   9809    
+
+   通过 7 / 失败 1 / 总计 8 ｜ 通过率 87.5% ｜ 并发峰值 2（容量 2） ｜ 平均耗时 2354 ms
+   审计事件: {'created': 8, 'dispatched': 10, 'done': 7, 'retry': 2, 'failed': 1}
+   失败归因示例 [T008-4238]：click 失败(#does-not-exist): TimeoutError: Page.click: Timeout 8000ms exceeded.
+Call log:
+  - waiting 
+
+⑦ 收尾：关闭所有进程
+   端口状态: 8081=已释放  8000=已释放  8001=已释放
+   完成。

@@ -1,0 +1,6 @@
+# 平台 / 执行机 / 内置 MCP
+mcp>=1.26
+playwright>=1.40
+
+# Playwright MCP 通过 npx 启动，需要本机 Node.js/npm（不属于 pip 依赖）
+# gen_doc.py（可选交付文档）额外需要 python-docx
