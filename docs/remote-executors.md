@@ -1,5 +1,11 @@
 # Windows 远程执行服务器接入预研
 
+> **仓库已拆分（2026-11-16）**：执行机代码与部署脚本在
+> [aiui-executor](https://github.com/Cchenyw/aiui-executor)，平台代码在
+> [aiui-platform](https://github.com/Cchenyw/aiui-platform)，共享模块在
+> [aiui-common](https://github.com/Cchenyw/aiui-common)。推荐部署方式见
+> [remote-node-deployment.md](remote-node-deployment.md)；本文保留为 2026-11-15 预研记录。
+
 目标：一个父平台统筹，2–3 台 Windows 执行服务器主动领取任务、运行 MCP/浏览器、回传日志与截图。本文为 2026-11-15 预研交付；公司网络及服务器现场验证结果需要另外记录。
 
 ## 1. 部署关系
