@@ -25,3 +25,5 @@ powershell -NoProfile -File scripts/start_remote_platform.ps1 `
 
 > 说明：依赖本地 `aiui.agent` 的演示脚本（demo_platform.py / demo_ai.py /
 > run_demo.py / smoke_remote_nodes.py）暂时保留在 monorepo，后续再拆到集成仓库。
+
+开发协作规范见 [AGENTS.md](AGENTS.md)，平台实现约束见 [CLAUDE.md](CLAUDE.md)。

@@ -39,7 +39,7 @@ D:\AIUI\
 
 2. 把 token 文件单独传到执行机，例如 `D:\AIUI\incoming\win-exec-02.token`。
 
-3. 把 `deploy\` 下的四个脚本放到执行机的 `D:\AIUI\deploy\`，然后运行：
+3. 把 `aiui-executor` 仓库 `deploy\` 下的四个脚本放到执行机的 `D:\AIUI\deploy\`，然后运行：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\AIUI\deploy\install_remote_node.ps1 `
@@ -47,16 +47,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\AIUI\deploy\install_remot
   -NodeId win-exec-02 -MachineId win-server-02 `
   -TokenFile D:\AIUI\incoming\win-exec-02.token `
   -Mode Git `
-  -RepoUrl https://github.com/Cchenyw/AIUI_test_v4.git -Ref master `
-  -SparsePaths aiui/agent,aiui/common,aiui/toolservers,aiui/testapp,scripts,configs,requirements.txt `
+  -RepoUrl https://github.com/Cchenyw/aiui-executor.git -Ref main `
   -AllowInsecureHttp
 ```
 
-仓库拆分完成后，把 `-Mode/RepoUrl/Ref/SparsePaths` 换成：
-
-```powershell
--Mode Release -RepoUrl https://github.com/Cchenyw/aiui-executor.git -Ref latest
-```
+仓库已拆分，执行机只从 `aiui-executor` 拉取代码；发布 release 后改用
+`-Mode Release -RepoUrl https://github.com/Cchenyw/aiui-executor.git -Ref latest`。
+不要再使用 monorepo 的 `-SparsePaths` 过渡方式。
 
 脚本会：
 
@@ -74,7 +71,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\AIUI\deploy\install_remot
 如果执行机目前还是 `D:\ui_test\AIUI_test_v4` 这种“代码和 runtime 混在一起”的布局：
 
 1. 停止正在运行的节点窗口（或使用 `-ForceStop`）。
-2. 把 `deploy\` 脚本放到 `D:\AIUI\deploy\`。
+2. 把 `aiui-executor` 仓库 `deploy\` 下的脚本放到 `D:\AIUI\deploy\`。
 3. 运行：
 
 ```powershell
@@ -96,13 +93,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\AIUI\deploy\migrate_remot
 ## 更新执行机
 
 ```powershell
-# 过渡：从当前 monorepo 只拉执行机文件
+# 当前：从 aiui-executor 的 main 拉取
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\AIUI\deploy\update_remote_node.ps1 `
   -InstallDir D:\AIUI -Mode Git `
-  -RepoUrl https://github.com/Cchenyw/AIUI_test_v4.git -Ref master `
-  -SparsePaths aiui/agent,aiui/common,aiui/toolservers,aiui/testapp,scripts,configs,requirements.txt
+  -RepoUrl https://github.com/Cchenyw/aiui-executor.git -Ref main
 
-# 仓库拆分后：固定 release tag
+# 发布 release 后：固定 release tag
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\AIUI\deploy\update_remote_node.ps1 `
   -InstallDir D:\AIUI -Mode Release `
   -RepoUrl https://github.com/Cchenyw/aiui-executor.git -Ref latest
@@ -163,9 +159,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\AIUI\deploy\remote_selfch
   -ProjectRoot D:\AIUI\app -ConfigPath D:\AIUI\runtime\remote-node.json
 ```
 
-自检结果写入 `D:\AIUI\app\scripts\selfcheck-output\` 或指定的 `-OutputDir`。
+自检结果写入脚本所在目录的 `selfcheck-output\`（部署布局下为
+`D:\AIUI\deploy\selfcheck-output\`）或指定的 `-OutputDir`。
 
-## 仓库拆分建议
+## 仓库拆分结果
+
+正式开发仓库：
+
+- `aiui-common`：https://github.com/Cchenyw/aiui-common
+- `aiui-platform`：https://github.com/Cchenyw/aiui-platform
+- `aiui-executor`：https://github.com/Cchenyw/aiui-executor
 
 | 仓库 | 内容 |
 | --- | --- |
@@ -173,9 +176,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\AIUI\deploy\remote_selfch
 | `aiui-platform` | `aiui/platform`、平台脚本/文档/测试 |
 | `aiui-executor` | `aiui/agent`、`aiui/toolservers`、`deploy/` 脚本、执行机测试 |
 
+`aiui-platform` 和 `aiui-executor` 各自自带一份 `aiui/common/` 副本；修改共享模块先改
+`aiui-common`，再把三份副本同步一致。原 monorepo（`AIUI_test_v4`）保留为集成验证与
+历史归档仓库，不再作为执行机部署来源。
+
 CI 在 executor/platform 打 tag 时，把对应 `aiui-common` tag 的源码一起打入 release
 zip，并生成 `SHA256SUMS` 和 `BUILD_INFO.json`；执行机只下载 executor release，
-不接触平台代码。`aiui/testapp` 可以放在 executor 仓库的 `demo/` 下用于冒烟测试。
+不接触平台代码。`aiui/testapp` 已放在 executor 仓库的 `aiui/testapp` 下用于冒烟测试。
 
 ## 注意事项
 
