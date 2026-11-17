@@ -168,6 +168,67 @@ class RemotePlatformTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.r.register('n1', {**self.body, 'instance_id': 'i2'})
 
+    def test_registration_reports_runtime_slots_and_sanitized_capabilities(self):
+        body = {
+            **self.body,
+            'runtime': {
+                'agent_version': '0.1.0', 'python': '3.13.9', 'os_version': '10.0.26100',
+                'api_key': 'must-not-store', 'unknown': 'drop-me',
+                'llm': {'configured': True, 'provider': 'openai',
+                        'model': 'deepseek-flash', 'api_key': 'must-not-store'},
+                'resources': {'cpu_cores': 4, 'memory_mb': 8192, 'disk_free_mb': 1000},
+            },
+            'slots_recommended': 4,
+            'mcp_capabilities': [
+                {'id': 'builtin-browser', 'available': True, 'tool_count': 2,
+                 'tools': ['navigate', 'snapshot'], 'profile_capable': True, 'probed_at': 123},
+                {'id': 'forbidden', 'available': True, 'tool_count': 1},
+            ],
+        }
+        reply = self.r.register('n1', body)
+        node = self.r.list_nodes()[0]
+        self.assertEqual(reply['slots'], 1)
+        self.assertEqual(reply['mcp_ids'], ['builtin-browser'])
+        self.assertEqual([m['id'] for m in reply['mcps']], ['builtin-browser'])
+        self.assertEqual(node['slots_advertised'], 99)
+        self.assertEqual(node['slots_granted'], 1)
+        self.assertEqual(node['slots_effective'], 1)
+        self.assertEqual(node['slots_recommended'], 4)
+        self.assertEqual(node['runtime']['python'], '3.13.9')
+        self.assertNotIn('api_key', node['runtime'])
+        self.assertNotIn('unknown', node['runtime'])
+        self.assertNotIn('api_key', node['runtime']['llm'])
+        self.assertEqual(node['runtime']['resources']['cpu_cores'], 4)
+        self.assertEqual([c['id'] for c in node['mcp_capabilities']], ['builtin-browser'])
+        self.assertEqual(node['mcp_capabilities'][0]['tool_count'], 2)
+
+    def test_heartbeat_updates_runtime_and_filters_capabilities(self):
+        self.register()
+        heartbeat = {
+            **self.body, 'active_dispatch_ids': [],
+            'runtime': {'python': '3.14.0'},
+            'mcp_capabilities': [
+                {'id': 'builtin-browser', 'available': False, 'tool_count': 0, 'error': 'probe failed'},
+                {'id': 'forbidden', 'available': True, 'tool_count': 3},
+            ],
+        }
+        self.r.heartbeat('n1', heartbeat)
+        node = self.r.list_nodes()[0]
+        self.assertEqual(node['runtime']['python'], '3.14.0')
+        self.assertEqual([c['id'] for c in node['mcp_capabilities']], ['builtin-browser'])
+        self.assertFalse(node['mcp_capabilities'][0]['available'])
+        self.assertEqual(node['mcp_capabilities'][0]['error'], 'probe failed')
+
+    def test_old_registration_without_extras_remains_compatible(self):
+        reply = self.register()
+        node = self.r.list_nodes()[0]
+        self.assertEqual(reply['slots'], 1)
+        self.assertEqual(node['slots_advertised'], 99)
+        self.assertEqual(node['slots_granted'], 1)
+        self.assertEqual(node['slots_effective'], 1)
+        self.assertNotIn('runtime', node)
+        self.assertNotIn('mcp_capabilities', node)
+
     def test_matching_replay_capacity_and_local_target(self):
         self.register()
         blocked = self.task(target_node_id='other')

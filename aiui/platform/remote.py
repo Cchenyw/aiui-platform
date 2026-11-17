@@ -14,7 +14,7 @@ from pathlib import Path
 
 from aiui.common import profiles
 from aiui.common.node_protocol import (VERSION, MAX_BODY_BYTES, HEARTBEAT_INTERVAL_S,
-                                       ID_RE, validate_envelope)
+                                       ID_RE, sanitize_registration_extras, validate_envelope)
 from aiui.common.paths import PROFILES_DIR
 
 
@@ -102,6 +102,12 @@ class RemoteCoordinator:
         self.store.conn.execute('INSERT OR REPLACE INTO remote_nodes VALUES (?,?)',
                                 (n['node_id'], json.dumps(n)))
 
+    @staticmethod
+    def _probe_config(mcp):
+        keys = ('id', 'name', 'transport', 'command', 'args', 'env', 'url',
+                'headers', 'builtin', 'enabled')
+        return {k: copy.deepcopy(mcp.get(k)) for k in keys if k in mcp}
+
     def register(self, node_id, body):
         p = self._policy(node_id, body)
         if body.get('machine_id') != p['machine_id']:
@@ -116,15 +122,33 @@ class RemoteCoordinator:
             if (n and n['instance_id'] != body['instance_id'] and n['status'] == 'online'
                     and time.time() - n['last_hb'] <= 10):
                 raise ProtocolError('另一节点实例仍在线')
+            advertised = body['slots']
+            granted = p['max_slots']
+            effective = min(granted, advertised)
             n = dict(node_id=node_id, instance_id=body['instance_id'], machine_id=p['machine_id'],
                      name=p['name'], os=str(body.get('os', '')), connection='pull',
-                     slots=min(p['max_slots'], body['slots']),
+                     slots=effective, slots_advertised=advertised,
+                     slots_granted=granted, slots_effective=effective,
                      mcp_ids=[x for x in p['mcp_ids'] if x in body['mcp_ids']],
-                     features=body['features'], status='online', last_hb=time.time())
+                     features=body['features'], status='online',
+                     last_hb=time.time(), registered_at=time.time())
+            extras = sanitize_registration_extras(body)
+            capabilities = extras.get('mcp_capabilities')
+            if capabilities is not None:
+                extras['mcp_capabilities'] = [
+                    c for c in capabilities if c.get('id') in n['mcp_ids']]
+            n.update(extras)
             if not body.get('dry_run'):
                 self._save_node(n)
-        return dict(ok=True, node_id=node_id, slots=n['slots'], mcp_ids=n['mcp_ids'],
-                    heartbeat_interval_s=HEARTBEAT_INTERVAL_S)
+        result = dict(ok=True, node_id=node_id, slots=n['slots'], mcp_ids=n['mcp_ids'],
+                      heartbeat_interval_s=HEARTBEAT_INTERVAL_S)
+        if not body.get('dry_run'):
+            allowed = set(n['mcp_ids'])
+            result['mcps'] = [
+                self._probe_config(m) for m in self.store.list_mcps()
+                if m.get('id') in allowed and m.get('enabled', True)
+            ]
+        return result
 
     def _active(self, nid, body):
         policy = self._policy(nid, body)
@@ -135,7 +159,16 @@ class RemoteCoordinator:
             raise ProtocolError('节点机器授权已变更，请重新注册')
         # 持久注册不是永久授权；每次活动都服从当前策略。
         n['mcp_ids'] = [mid for mid in n['mcp_ids'] if mid in policy['mcp_ids']]
-        n['slots'] = min(n['slots'], policy['max_slots'])
+        advertised = int(n.get('slots_advertised', n['slots']))
+        granted = policy['max_slots']
+        effective = min(advertised, granted)
+        n['slots_advertised'] = advertised
+        n['slots_granted'] = granted
+        n['slots_effective'] = effective
+        n['slots'] = effective
+        if n.get('mcp_capabilities'):
+            n['mcp_capabilities'] = [
+                c for c in n['mcp_capabilities'] if c.get('id') in n['mcp_ids']]
         n['name'] = policy['name']
         ids = body.get('active_dispatch_ids', [])
         if not isinstance(ids, list) or not all(isinstance(v, str) for v in ids):
@@ -150,7 +183,15 @@ class RemoteCoordinator:
 
     def heartbeat(self, node_id, body):
         with self._atomic():
-            self._active(node_id, body)
+            n = self._active(node_id, body)
+            extras = sanitize_registration_extras(body)
+            capabilities = extras.get('mcp_capabilities')
+            if capabilities is not None:
+                extras['mcp_capabilities'] = [
+                    c for c in capabilities if c.get('id') in n['mcp_ids']]
+            if extras:
+                n.update(extras)
+                self._save_node(n)
         return {'ok': True}
 
     def _payload(self, t):

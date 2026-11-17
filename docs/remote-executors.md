@@ -218,3 +218,32 @@ $env:TMP = $env:TEMP
 ```
 
 模拟报告写入 `runtime/remote-smoke-*/summary.json`；不进入 Git 或源码包。源码包中的 `BUILD_INFO.json` 记录分支、基线提交、验证计数和源文件 SHA-256；这是未提交的预研快照，现场应同时记录快照校验值。解压到独立目录后按第 2–5 节安装依赖、创建本机凭证并启动，不复制个人电脑的运行数据库、登录态或虚拟环境。
+
+## 11. 节点能力上报与展示
+
+注册和心跳支持可选的**展示型**能力字段；它们不参与 token、CIDR、slots、MCP 白名单等调度授权校验。
+
+- **注册**（`POST /v1/register`）可带：
+  - `runtime`：Agent 版本、协议版本、OS 版本/架构、Python、Node、npm、Playwright、Chrome 路径/检测、运行账号、计划任务、启动时间、LLM provider/model（不含 key）、CPU/内存/磁盘信息
+  - `slots_recommended`：执行机根据硬件给出的建议容量，仅作参考
+- **注册响应**会返回该节点有效 `mcp_ids` 对应的 MCP 启动配置；执行机据此在后台调用 `list_tools` 探测，不阻塞任务循环
+- **心跳**（`POST /v1/heartbeat`）可带 `mcp_capabilities`：每个 MCP 的可用性、版本（能从启动参数解析时）、工具数量、工具名、Profile 支持、探测错误和时间
+- 平台对可选字段做白名单、长度截断和有效 MCP 过滤；旧节点不传时显示“未上报”
+
+### Slots 语义
+
+| 值 | 来源 | 含义 |
+| --- | --- | --- |
+| `slots_advertised` | 执行机配置 | 本机愿意/能够同时跑几个任务 |
+| `slots_granted` | 平台策略 `max_slots` | 平台允许的上限 |
+| `slots_effective` | 平台计算 | `min(advertised, granted)`，实际下发给 Worker |
+| `slots_recommended` | 执行机硬件提示 | 仅供运维参考，不参与调度 |
+
+平台策略是权威值；执行机可以主动降低本机容量，但不能突破平台授权。节点注册响应中的 `slots` 保持为实际生效值，旧的 `slots` 整数协议不变。
+
+### 查看方式
+
+- 页面：执行节点管理 → 远程执行节点 → 点击节点名称，进入 `/agents/remote/{node_id}`
+- API：`GET /api/remote/nodes`、`GET /api/remote/nodes/{node_id}`
+
+能力探测结果只用于展示和排障，不能替代平台策略。执行机不得上报 token、API key、Profile 原文或完整环境变量；平台详情页也不展示这些内容。注册响应中的 MCP 启动配置可能包含 `env`/`headers`，执行机只能用于本地探测，不得写入日志或展示页面；平台详情页只展示探测摘要。

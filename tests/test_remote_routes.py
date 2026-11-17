@@ -55,6 +55,31 @@ class RemoteTargetRoutesTests(unittest.TestCase):
         response = conn.getresponse()
         return response.status, response.read().decode('utf-8')
 
+    def test_remote_node_detail_api_and_page_include_capabilities(self):
+        self.remote.heartbeat('win-01', {
+            'version': 1, 'node_id': 'win-01', 'instance_id': 'instance-01',
+            'active_dispatch_ids': [],
+            'runtime': {'agent_version': '0.1.0', 'python': '3.13.9'},
+            'mcp_capabilities': [{
+                'id': 'builtin-browser', 'available': True, 'tool_count': 8,
+                'tools': ['navigate'], 'profile_capable': True,
+            }],
+        })
+        code, body = self.request('GET', '/api/remote/nodes/win-01')
+        self.assertEqual(code, 200)
+        data = json.loads(body)
+        self.assertEqual(data['runtime']['python'], '3.13.9')
+        self.assertEqual(data['mcp_capabilities'][0]['tool_count'], 8)
+        code, body = self.request('GET', '/api/remote/nodes')
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body)['nodes'][0]['node_id'], 'win-01')
+        code, page = self.request('GET', '/agents/remote/win-01')
+        self.assertEqual(code, 200)
+        for value in ('win-01', 'Python', '3.13.9', 'builtin-browser', 'navigate'):
+            self.assertIn(value, page)
+        code, _ = self.request('GET', '/api/remote/nodes/missing')
+        self.assertEqual(code, 404)
+
     def test_single_case_json_run_honors_remote_target(self):
         code, _ = self.request('POST', f"/api/cases/{self.case['case_id']}/run",
                                {'target_node_id': 'win-01'}, as_json=True)

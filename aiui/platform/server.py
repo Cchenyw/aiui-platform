@@ -1121,6 +1121,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "service": "platform"})
         if parts == ["api", "status"]:
             return self._json(P.status())
+        if parts == ["api", "remote", "nodes"]:
+            return self._json({"nodes": P.remote.list_nodes() if P.remote else []})
+        if len(parts) == 4 and parts[:3] == ["api", "remote", "nodes"]:
+            nodes = P.remote.list_nodes() if P.remote else []
+            node = next((n for n in nodes if n.get("node_id") == parts[3]), None)
+            return self._json(node, 200) if node else self._json({"error": "节点不存在"}, 404)
         if parts == ["api", "tasks"]:
             return self._json({"tasks": P.task_summaries()})
         if parts == ["api", "trace"]:
@@ -1261,6 +1267,13 @@ class Handler(BaseHTTPRequestHandler):
                 "procs": AM.snapshot(), "here": str(ROOT), "log_dir": str(LOG_DIR),
                 "msg": msg, "err": err,
             }))
+        if len(parts) == 3 and parts[:2] == ["agents", "remote"]:
+            nodes = P.remote.list_nodes() if P.remote else []
+            node = next((n for n in nodes if n.get("node_id") == parts[2]), None)
+            if not node:
+                return self._html("<h1>远程节点不存在</h1>", 404)
+            runs = [r for r in STORE.list_runs(50) if r.get("node_id") == parts[2]][:10]
+            return self._html(ui.remote_node_page({"node": node, "runs": runs}))
         if parts == ["agents", "new"]:
             return self._html(ui.agent_form({
                 "agent": {}, "is_new": True, "here": str(ROOT),

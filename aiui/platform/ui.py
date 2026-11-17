@@ -722,7 +722,8 @@ def agents_page(ctx):
     remote_rows = ""
     for node in ctx["status"].get("remote_nodes") or []:
         remote_rows += (
-            f'<tr><td><b>{esc(node.get("name") or node["node_id"])}</b>'
+            f'<tr><td><a href="/agents/remote/{esc(node["node_id"])}">'
+            f'<b>{esc(node.get("name") or node["node_id"])}</b></a>'
             f'<div class=mono>{esc(node["node_id"])}</div></td>'
             f'<td class=mono>{esc(node.get("machine_id"))}</td><td>主动领取</td>'
             f'<td>{agent_badge(node.get("status", "offline"))}</td>'
@@ -758,6 +759,105 @@ def agents_page(ctx):
 </div>
 """
     return layout("执行节点管理", "/agents", body, msg=ctx.get("msg"), err=ctx.get("err"))
+
+
+def remote_node_page(ctx):
+    n = ctx["node"]
+    runtime = n.get("runtime") or {}
+    llm = runtime.get("llm") or {}
+    resources = runtime.get("resources") or {}
+    capabilities = n.get("mcp_capabilities") or []
+    runs = ctx.get("runs") or []
+
+    def kv_row(label, value):
+        shown = "-" if value in (None, "") else str(value)
+        return f"<tr><th>{esc(label)}</th><td class=mono>{esc(shown)}</td></tr>"
+
+    identity_rows = "".join([
+        kv_row("节点 ID", n.get("node_id")),
+        kv_row("执行机 ID", n.get("machine_id")),
+        kv_row("实例 ID", (n.get("instance_id") or "")[:12]),
+        kv_row("状态", n.get("status")),
+        kv_row("连接方式", n.get("connection")),
+        kv_row("最近心跳", fmt_ts(n.get("last_hb"))),
+        kv_row("注册时间", fmt_ts(n.get("registered_at"))),
+        kv_row("运行账号", runtime.get("account")),
+        kv_row("计划任务", runtime.get("scheduled_task")),
+    ])
+    runtime_rows = "".join([
+        kv_row("Agent 版本", runtime.get("agent_version")),
+        kv_row("协议版本", runtime.get("protocol")),
+        kv_row("操作系统", " ".join(x for x in (
+            runtime.get("os"), runtime.get("os_version"), runtime.get("arch")) if x)),
+        kv_row("Python", runtime.get("python")),
+        kv_row("Node", runtime.get("node")),
+        kv_row("npm", runtime.get("npm")),
+        kv_row("Playwright", runtime.get("playwright")),
+        kv_row("Chrome", runtime.get("chrome")),
+        kv_row("Chrome 检测", "是" if runtime.get("chrome_detected") else "否"),
+        kv_row("显式 Chromium", "是" if runtime.get("chromium_configured") else "否"),
+        kv_row("LLM", ("已配置 · " + " / ".join(x for x in (
+            llm.get("provider"), llm.get("model")) if x))
+              if llm.get("configured") else "未配置"),
+        kv_row("LLM Base URL", llm.get("base_url")),
+        kv_row("CPU 核数", resources.get("cpu_cores")),
+        kv_row("内存 MB", resources.get("memory_mb")),
+        kv_row("磁盘剩余 MB", resources.get("disk_free_mb")),
+    ])
+    advertised = n.get("slots_advertised", n.get("slots", 0))
+    granted = n.get("slots_granted", "-")
+    effective = n.get("slots_effective", n.get("slots", 0))
+    recommended = n.get("slots_recommended", "-")
+    slots = f"""<div class=cards>
+  <div class=card><span>执行机声明</span><b>{esc(advertised)}</b></div>
+  <div class=card><span>平台授权上限</span><b>{esc(granted)}</b></div>
+  <div class=card><span>实际生效</span><b style="color:#1e7d32">{esc(effective)}</b></div>
+  <div class=card><span>硬件建议</span><b>{esc(recommended)}</b></div>
+  <div class=card><span>当前占用</span><b>{esc(n.get('running', 0))}/{esc(effective)}</b></div>
+</div>"""
+    cap_rows = ""
+    for cap in capabilities:
+        available = bool(cap.get("available"))
+        tools = ", ".join(cap.get("tools") or [])
+        cap_rows += (
+            f"<tr><td class=mono>{esc(cap.get('id'))}</td>"
+            f"<td><span class=\"badge {'done' if available else 'failed'}\">"
+            f"{'可用' if available else '不可用'}</span></td>"
+            f"<td>{esc(cap.get('version') or '-')}</td>"
+            f"<td>{esc(cap.get('tool_count', '-'))}</td>"
+            f"<td>{'是' if cap.get('profile_capable') else '否'}</td>"
+            f"<td class=mono>{esc(tools[:300])}</td>"
+            f"<td>{esc((cap.get('error') or '')[:200])}</td>"
+            f"<td class=nowrap>{fmt_ts(cap.get('probed_at'))}</td></tr>")
+    cap_rows = cap_rows or (
+        "<tr><td colspan=8 class=empty>尚未探测。节点注册后会在后台探测声明的 MCP，"
+        "并通过心跳上报工具数量；旧节点或探测未完成时这里为空。</td></tr>")
+    run_rows = "".join(
+        f"<tr><td><a class=mono href='/runs/{esc(r['task_id'])}'>{esc(r['task_id'])}</a></td>"
+        f"<td>{esc(r.get('name'))}</td><td>{badge(r.get('state', ''))}</td>"
+        f"<td>{verdict_badge(r.get('verdict'))}</td><td>{fmt_ms(r.get('elapsed_ms'))}</td>"
+        f"<td>{esc((r.get('error') or '')[:200])}</td></tr>"
+        for r in runs)
+    run_rows = run_rows or "<tr><td colspan=6 class=empty>暂无该节点的运行记录。</td></tr>"
+    body = f"""
+<div class=toolbar><a class="btn" href="/agents">← 返回执行节点管理</a></div>
+<div class=cards>
+  <div class=card><span>状态</span><b>{agent_badge(n.get('status', 'offline'))}</b></div>
+  <div class=card><span>有效 MCP</span><b>{esc(len(n.get('mcp_ids') or []))}</b></div>
+  <div class=card><span>探测到可用 MCP</span><b>{sum(1 for c in capabilities if c.get('available'))}</b></div>
+</div>
+<div class=panel><h2>基本信息</h2><table>{identity_rows}</table></div>
+<div class=panel><h2>容量（平台授权为准）</h2>{slots}
+<div class=hint>执行机声明本机容量，平台策略定义授权上限，实际生效取两者较小值。硬件建议只供运维参考，不参与调度。</div></div>
+<div class=panel><h2>运行时环境</h2><table>{runtime_rows}</table>
+<div class=hint>运行时信息来自执行机自报，只用于展示和排障，不作为调度安全依据；API key、token、Profile 原文不会出现在这里。</div></div>
+<div class=panel><h2>MCP 能力</h2>
+<div class=hint>有效 MCP：{esc(', '.join(n.get('mcp_ids') or []) or '-')}；特征：{esc(', '.join(n.get('features') or []) or '-')}。探测结果只用于展示，实际任务仍由平台策略和任务 MCP 配置决定。</div>
+<table><tr><th>MCP</th><th>可用</th><th>版本</th><th>工具数</th><th>Profile</th><th>工具预览</th><th>错误</th><th>探测时间</th></tr>{cap_rows}</table></div>
+<div class=panel><h2>最近运行</h2>
+<table><tr><th>任务</th><th>用例</th><th>状态</th><th>判定</th><th>耗时</th><th>错误</th></tr>{run_rows}</table></div>
+"""
+    return layout(f"远程节点 · {n.get('name') or n.get('node_id')}", "/agents", body)
 
 
 def agent_form(ctx):
