@@ -80,6 +80,14 @@ class RemoteTargetRoutesTests(unittest.TestCase):
         code, _ = self.request('GET', '/api/remote/nodes/missing')
         self.assertEqual(code, 404)
 
+    def test_mcp_probe_uses_executor_root(self):
+        executor_root = Path('D:/AIUI/executor/app')
+        with patch.object(server.mcp_runtime, 'probe_tools', return_value=([], "")) as probe:
+            with patch.object(server, 'EXECUTOR_ROOT', executor_root):
+                code, body = self.request('POST', '/api/mcps/builtin-browser/probe')
+        self.assertEqual(code, 200, body)
+        self.assertEqual(probe.call_args.args[1], executor_root)
+
     def test_single_case_json_run_honors_remote_target(self):
         code, _ = self.request('POST', f"/api/cases/{self.case['case_id']}/run",
                                {'target_node_id': 'win-01'}, as_json=True)

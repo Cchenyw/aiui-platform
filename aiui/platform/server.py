@@ -47,6 +47,17 @@ STORE = None
 P = None
 AM = None
 PLATFORM_URL = "http://127.0.0.1:8000"
+EXECUTOR_ROOT = Path(os.environ.get("AIUI_EXECUTOR_ROOT") or ROOT).expanduser().resolve()
+
+
+def executor_python():
+    """执行端解释器：优先使用执行机自己的 .venv，否则回退到当前解释器。"""
+    candidates = (EXECUTOR_ROOT / ".venv" / "Scripts" / "python.exe",
+                  EXECUTOR_ROOT / ".venv" / "bin" / "python")
+    for path in candidates:
+        if path.is_file():
+            return str(path)
+    return sys.executable
 
 
 def now():
@@ -574,6 +585,7 @@ class AgentManager:
     def _subst(self, text, cfg):
         mapping = {
             "{python}": sys.executable, "{here}": str(ROOT),
+            "{executor}": str(EXECUTOR_ROOT),
             "{platform}": self.platform_url, "{agent_id}": cfg["id"],
             "{host}": cfg["host"], "{port}": str(cfg["port"]), "{slots}": str(cfg["slots"]),
         }
@@ -583,7 +595,7 @@ class AgentManager:
 
     def _cmd(self, cfg):
         if cfg["kind"] == "builtin":
-            return [sys.executable, "-m", "aiui.agent.runner",
+            return [executor_python(), "-m", "aiui.agent.runner",
                     "--platform", self.platform_url, "--agent-id", cfg["id"],
                     "--host", cfg["host"], "--port", str(cfg["port"]),
                     "--slots", str(cfg["slots"])]
@@ -611,7 +623,7 @@ class AgentManager:
     def _cwd(self, cfg):
         cwd = (cfg.get("cwd") or "").strip()
         if not cwd:
-            return str(ROOT)
+            return str(EXECUTOR_ROOT if cfg["kind"] == "builtin" else ROOT)
         p = Path(cwd)
         return str(p if p.is_absolute() else ROOT / p)
 
@@ -1449,7 +1461,7 @@ class Handler(BaseHTTPRequestHandler):
             m = STORE.get_mcp(parts[2])
             if not m:
                 return self._json({"ok": False, "error": "MCP 不存在"}, 404)
-            tools, err = mcp_runtime.probe_tools(m, ROOT, timeout=90)
+            tools, err = mcp_runtime.probe_tools(m, EXECUTOR_ROOT, timeout=90)
             STORE.set_mcp_probe(parts[2], tools, err)
             return self._json({"ok": not err, "tools": tools, "error": err})
         if parts == ["api", "cases"]:
@@ -1743,7 +1755,7 @@ class Handler(BaseHTTPRequestHandler):
             m = STORE.get_mcp(parts[1])
             if not m:
                 return self._flash("/mcps", err="MCP 不存在")
-            tools, err = mcp_runtime.probe_tools(m, ROOT, timeout=90)
+            tools, err = mcp_runtime.probe_tools(m, EXECUTOR_ROOT, timeout=90)
             STORE.set_mcp_probe(parts[1], tools, err)
             if err:
                 return self._flash(f"/mcps/{parts[1]}", err=f"探测失败: {err}")
