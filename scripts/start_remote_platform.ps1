@@ -6,6 +6,8 @@
     [string]$Certificate,
     [string]$PrivateKey,
     [string]$DatabasePath,
+    [string]$RuntimeDir,
+    [string]$ExecutorRoot,
     [switch]$AllowInsecureHttp,
     [switch]$NoAutostart
 )
@@ -14,6 +16,12 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $projectRoot
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $env:PYTHONIOENCODING = 'utf-8'
+if ($RuntimeDir) {
+    $env:AIUI_RUNTIME_DIR = [System.IO.Path]::GetFullPath($RuntimeDir)
+}
+if ($ExecutorRoot) {
+    $env:AIUI_EXECUTOR_ROOT = [System.IO.Path]::GetFullPath($ExecutorRoot)
+}
 $pythonExe = Join-Path $projectRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $pythonExe)) {
     throw '缺少项目虚拟环境，请先安装 Python 并创建 .venv。'
