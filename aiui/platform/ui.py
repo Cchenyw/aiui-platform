@@ -755,7 +755,8 @@ def agents_page(ctx):
 内置 runner 的命令由平台自动生成；自定义执行节点（如 hermes / workbuddy）可在编辑页配置启动命令，
 平台会注入 <code>PLATFORM_URL</code>、<code>AGENT_ID</code>、<code>AGENT_HOST</code>、<code>AGENT_PORT</code>、
 <code>AGENT_SLOTS</code> 环境变量，并支持 <code>{{platform}}</code> <code>{{agent_id}}</code>
-<code>{{host}}</code> <code>{{port}}</code> <code>{{slots}}</code> <code>{{python}}</code> <code>{{here}}</code> 占位符。
+<code>{{host}}</code> <code>{{port}}</code> <code>{{slots}}</code> <code>{{python}}</code> <code>{{here}}</code>
+<code>{{executor}}</code> 占位符。内置 runner 使用 <code>AIUI_EXECUTOR_ROOT</code> 下的执行端代码。
 </div>
 """
     return layout("执行节点管理", "/agents", body, msg=ctx.get("msg"), err=ctx.get("err"))
