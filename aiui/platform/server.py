@@ -1384,6 +1384,18 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as e:
                 return self._json({"ok": False, "error": str(e)}, 400)
             return self._json({"ok": True, "case": case}, 201)
+        if len(parts) == 5 and parts[:3] == ["api", "remote", "nodes"] and parts[4] == "slots":
+            # 管理监听器专属：只允许修改平台授权上限，token/CIDR/MCP 仍离线维护。
+            if not P.remote:
+                return self._json({"ok": False, "error": "远程网关未启用"}, 400)
+            if parts[3] not in P.remote.policies["nodes"]:
+                return self._json({"ok": False, "error": "节点不存在"}, 404)
+            d = self._json_body()
+            try:
+                result = P.remote.update_grant(parts[3], d.get("max_slots"))
+            except ValueError as e:
+                return self._json({"ok": False, "error": str(e)}, 400)
+            return self._json({"ok": True, **result})
         if parts == ["api", "budget"]:
             try:
                 b = STORE.save_budget(self._json_body())
@@ -1663,6 +1675,24 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 3 and parts[0] == "agents" and parts[2] == "stop":
             ok, msg = AM.stop(parts[1])
             return self._flash("/agents", msg=msg if ok else "", err="" if ok else msg)
+        if len(parts) == 4 and parts[:2] == ["agents", "remote"] and parts[3] == "slots":
+            if not P.remote:
+                return self._flash(f"/agents/remote/{parts[2]}", err="远程网关未启用")
+            form = self._form()
+            try:
+                value = int(_fget(form, "max_slots").strip())
+            except (TypeError, ValueError):
+                return self._flash(f"/agents/remote/{parts[2]}",
+                                   err="平台授权容量必须是 1–128 的整数")
+            try:
+                result = P.remote.update_grant(parts[2], value)
+            except ValueError as e:
+                return self._flash(f"/agents/remote/{parts[2]}", err=str(e))
+            effective = result.get("slots_effective")
+            return self._flash(
+                f"/agents/remote/{parts[2]}",
+                msg=f"平台授权上限已更新为 {result['slots_granted']}，实际生效 "
+                    f"{effective if effective is not None else '待节点上报'}")
         if parts == ["budget"]:
             form = self._form()
             raw_total = _fget(form, "max_total_tokens")
@@ -1909,7 +1939,8 @@ def main():
     if a.node_policies:
         from aiui.platform.remote import RemoteCoordinator, load_policies, make_gateway
         try:
-            coordinator = RemoteCoordinator(P, load_policies(a.node_policies))
+            coordinator = RemoteCoordinator(P, load_policies(a.node_policies),
+                                            policy_path=a.node_policies)
             gateway = make_gateway(coordinator, a.gateway_host, a.gateway_port,
                                    a.gateway_cert, a.gateway_key, a.allow_insecure_gateway_http)
         except (ValueError, OSError):

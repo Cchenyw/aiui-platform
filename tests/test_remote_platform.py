@@ -134,6 +134,50 @@ class RemotePlatformTests(unittest.TestCase):
         self.assertEqual(self.r.list_nodes()[0]['slots'], 1)
         self.r.event('n1', self.event(task))
 
+    def test_update_grant_applies_immediately_without_killing_running_tasks(self):
+        self.register()  # 声明 99，授权 1
+        self.assertEqual(self.r.list_nodes()[0]['slots_effective'], 1)
+        result = self.r.update_grant('n1', 2)
+        self.assertEqual(result['slots_granted'], 2)
+        node = self.r.list_nodes()[0]
+        self.assertEqual((node['slots_granted'], node['slots_effective'], node['slots']), (2, 2, 2))
+        first = self.task(); second = self.task()
+        a = self.r.claim('n1', self.body)['task']
+        b = self.r.claim('n1', {**self.body, 'active_dispatch_ids': [a['dispatch_id']]})['task']
+        self.assertIsNotNone(a); self.assertIsNotNone(b)
+        self.r.update_grant('n1', 1)
+        node = self.r.list_nodes()[0]
+        self.assertEqual((node['slots_granted'], node['slots_effective']), (1, 1))
+        active = {**self.body, 'active_dispatch_ids': [a['dispatch_id'], b['dispatch_id']]}
+        self.assertIsNone(self.r.claim('n1', active)['task'])
+        # 降低授权不打断在跑任务，占用回落后才恢复派发
+        self.assertEqual(self.p.tasks[first]['state'], 'running')
+        self.assertEqual(self.p.tasks[second]['state'], 'running')
+        self.r.event('n1', self.event(a, event_id='e1'))
+        self.r.event('n1', self.event(b, event_id='e2'))
+        self.task()
+        self.assertIsNotNone(self.r.claim('n1', self.body)['task'])
+
+    def test_update_grant_persists_policy_file_and_validates(self):
+        from aiui.platform.remote import RemoteCoordinator, load_policies
+        path = Path(self.tmp.name) / 'gateway-policies.json'
+        path.write_text(json.dumps(self.policy, ensure_ascii=False), encoding='utf-8')
+        coordinator = RemoteCoordinator(self.p, load_policies(path), policy_path=path)
+        result = coordinator.update_grant('n1', 3)
+        self.assertEqual(result['slots_granted'], 3)
+        saved = json.loads(path.read_text(encoding='utf-8'))
+        self.assertEqual(saved['nodes']['n1']['max_slots'], 3)
+        self.assertEqual(saved['nodes']['n1']['token_sha256'],
+                         self.policy['nodes']['n1']['token_sha256'])
+        self.assertFalse(Path(str(path) + '.tmp').exists())
+        for bad in (0, 129, '2', True, 2.0):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                coordinator.update_grant('n1', bad)
+        self.assertEqual(
+            json.loads(path.read_text(encoding='utf-8'))['nodes']['n1']['max_slots'], 3)
+        with self.assertRaises(ValueError):
+            coordinator.update_grant('missing', 1)
+
     def test_restart_machine_binding_change_blocks_claim_but_accepts_old_result(self):
         import copy
         self.register(); self.task()

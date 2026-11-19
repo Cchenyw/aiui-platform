@@ -5,6 +5,7 @@ import hmac
 import heapq
 import ipaddress
 import json
+import os
 import ssl
 import time
 import uuid
@@ -53,10 +54,13 @@ def load_policies(path_or_dict):
 
 
 class RemoteCoordinator:
-    def __init__(self, platform, policies):
+    def __init__(self, platform, policies, policy_path=None):
         self.platform = platform
         self.store = platform.store
         self.policies = load_policies(policies)
+        # 策略文件路径仅在管理监听器内使用；在线授权变更需要原子写回，
+        # 直接传字典（测试或嵌入式调用）时只改内存。
+        self.policy_path = Path(policy_path) if policy_path else None
         platform.remote = self
         self.recover()
 
@@ -101,6 +105,48 @@ class RemoteCoordinator:
     def _save_node(self, n):
         self.store.conn.execute('INSERT OR REPLACE INTO remote_nodes VALUES (?,?)',
                                 (n['node_id'], json.dumps(n)))
+
+    def _write_policies(self, data):
+        path = self.policy_path
+        temporary = path.with_name(path.name + '.tmp')
+        try:
+            temporary.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+            os.replace(temporary, path)
+        except OSError as exc:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+            raise ProtocolError('节点策略写入失败，授权未变更') from exc
+
+    def update_grant(self, node_id, max_slots):
+        """在线修改平台授权容量；只改 max_slots，不触碰 token/CIDR/MCP 白名单。
+
+        变更即时进入内存策略，下一次心跳/claim 按 min(声明, 授权) 重算；
+        正在运行的任务不会被中断，只会阻止新的派发直到占用低于新上限。
+        """
+        if type(max_slots) is not int or not 1 <= max_slots <= 128:
+            raise ProtocolError('平台授权容量无效')
+        with self.platform.lock:
+            if node_id not in self.policies['nodes']:
+                raise ProtocolError('节点不存在')
+            updated = copy.deepcopy(self.policies)
+            updated['nodes'][node_id]['max_slots'] = max_slots
+            if self.policy_path is not None:
+                self._write_policies(updated)
+            self.policies = updated
+            n = self._node(node_id)
+            if n:
+                advertised = int(n.get('slots_advertised', n.get('slots', max_slots)))
+                n['slots_advertised'] = advertised
+                n['slots_granted'] = max_slots
+                n['slots_effective'] = min(advertised, max_slots)
+                n['slots'] = n['slots_effective']
+                with self.store.transaction():
+                    self._save_node(n)
+            return {'node_id': node_id, 'slots_granted': max_slots,
+                    'slots_effective': (n or {}).get('slots_effective')}
 
     @staticmethod
     def _probe_config(mcp):

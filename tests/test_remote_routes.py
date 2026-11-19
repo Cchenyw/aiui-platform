@@ -80,6 +80,32 @@ class RemoteTargetRoutesTests(unittest.TestCase):
         code, _ = self.request('GET', '/api/remote/nodes/missing')
         self.assertEqual(code, 404)
 
+    def test_slot_grant_api_and_form_update_node_capacity(self):
+        code, body = self.request('POST', '/api/remote/nodes/win-01/slots',
+                                  {'max_slots': 2}, as_json=True)
+        self.assertEqual(code, 200, body)
+        data = json.loads(body)
+        self.assertEqual((data['ok'], data['slots_granted']), (True, 2))
+        code, body = self.request('GET', '/api/remote/nodes/win-01')
+        node = json.loads(body)
+        self.assertEqual(node['slots_granted'], 2)
+        self.assertEqual(node['slots_effective'], 1)  # 执行机声明只有 1
+        code, _ = self.request('POST', '/agents/remote/win-01/slots', {'max_slots': '3'})
+        self.assertEqual(code, 303)
+        code, page = self.request('GET', '/agents/remote/win-01')
+        self.assertEqual(code, 200)
+        self.assertIn('value="3"', page)
+        code, body = self.request('POST', '/api/remote/nodes/win-01/slots',
+                                  {'max_slots': 0}, as_json=True)
+        self.assertEqual(code, 400)
+        code, _ = self.request('POST', '/api/remote/nodes/missing/slots',
+                               {'max_slots': 2}, as_json=True)
+        self.assertEqual(code, 404)
+        code, _ = self.request('POST', '/agents/remote/win-01/slots', {'max_slots': 'abc'})
+        self.assertEqual(code, 303)  # 表单错误走 flash 回显
+        code, body = self.request('GET', '/api/remote/nodes/win-01')
+        self.assertEqual(json.loads(body)['slots_granted'], 3)
+
     def test_mcp_probe_uses_executor_root(self):
         executor_root = Path('D:/AIUI/executor/app')
         with patch.object(server.mcp_runtime, 'probe_tools', return_value=([], "")) as probe:
