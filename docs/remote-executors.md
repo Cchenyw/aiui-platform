@@ -255,6 +255,14 @@ $env:TMP = $env:TEMP
 - 变更立即写回策略文件，并按 `min(声明, 授权)` 重算。调低授权不会中断正在运行的任务，只阻止新派发直到占用低于新上限
 - 执行机在下一次心跳拿到新的生效容量；未升级的执行端调低时仍受平台 `claim` 限流，调高则需要升级后才会多用
 
+### 并发与 MCP 隔离
+
+- 每个任务建立独立的 stdio MCP 会话和子进程，任务之间不共享浏览器进程
+- 内置浏览器 MCP 每次进程启动新的临时 Chromium profile；官方 Playwright MCP 必须使用 `--isolated`，执行端会在启动前自动补齐缺失的 `--isolated` 并在日志中提示
+- 使用执行环境 Profile 时，每个任务使用私有临时 storage-state 文件（`--isolated --storage-state`），运行期写入不回写
+- HTTP/SSE 类型 MCP 是服务端共享实例，无法按任务隔离；并行容量由该服务自行保证
+- ExecuteAutomation 版 Playwright MCP 未验证并发隔离，建议仅以单并发使用
+
 ### 查看方式
 
 - 页面：执行节点管理 → 远程执行节点 → 点击节点名称，进入 `/agents/remote/{node_id}`

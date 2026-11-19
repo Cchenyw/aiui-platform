@@ -238,7 +238,9 @@ class RemoteCoordinator:
             if extras:
                 n.update(extras)
                 self._save_node(n)
-        return {'ok': True}
+        # 心跳是运行期授权变更（提高上限/恢复容量）下发给执行机的唯一通道；
+        # 只返回实际生效值，worker 仍受自己的声明容量封顶。
+        return {'ok': True, 'slots': n['slots']}
 
     def _payload(self, t):
         payload = {k: t.get(k) for k in ('task_id', 'dispatch_id', 'instance_id', 'case', 'mcp',
