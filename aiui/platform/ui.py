@@ -816,6 +816,12 @@ def remote_node_page(ctx):
   <div class=card><span>硬件建议</span><b>{esc(recommended)}</b></div>
   <div class=card><span>当前占用</span><b>{esc(n.get('running', 0))}/{esc(effective)}</b></div>
 </div>"""
+    grant_form = f"""<form method=post action="/agents/remote/{esc(n.get('node_id', ''))}/slots">
+<label class=field><span>平台授权上限（1–128）</span>
+<input type=number name=max_slots min=1 max=128 required value="{esc(n.get('slots_granted') or 1)}">
+<div class=hint>实际生效取执行机声明与平台授权的较小值。调高后执行机下一次心跳即可放开派发；调低不会中断正在运行的任务，只阻止新派发直到占用低于新上限。</div></label>
+<button class="btn primary">保存授权</button>
+</form>"""
     cap_rows = ""
     for cap in capabilities:
         available = bool(cap.get("available"))
@@ -848,7 +854,7 @@ def remote_node_page(ctx):
   <div class=card><span>探测到可用 MCP</span><b>{sum(1 for c in capabilities if c.get('available'))}</b></div>
 </div>
 <div class=panel><h2>基本信息</h2><table>{identity_rows}</table></div>
-<div class=panel><h2>容量（平台授权为准）</h2>{slots}
+<div class=panel><h2>容量（平台授权为准）</h2>{slots}{grant_form}
 <div class=hint>执行机声明本机容量，平台策略定义授权上限，实际生效取两者较小值。硬件建议只供运维参考，不参与调度。</div></div>
 <div class=panel><h2>运行时环境</h2><table>{runtime_rows}</table>
 <div class=hint>运行时信息来自执行机自报，只用于展示和排障，不作为调度安全依据；API key、token、Profile 原文不会出现在这里。</div></div>
