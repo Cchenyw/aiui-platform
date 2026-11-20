@@ -909,6 +909,14 @@ class Store:
         with self.lock:
             return self.conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
 
+    def delete_run(self, task_id):
+        """删除运行记录和日志；内存态、截图与活动任务校验由 Platform 负责。"""
+        with self.lock:
+            cur = self.conn.execute("DELETE FROM runs WHERE task_id=?", (task_id,))
+            self.conn.execute("DELETE FROM run_logs WHERE task_id=?", (task_id,))
+            self._commit()
+            return cur.rowcount > 0
+
     def recover_stale_runs(self):
         """平台重启后，内存队列已丢；把上次未完成的运行标记为失败，避免永远“执行中”。"""
         with self.lock:
