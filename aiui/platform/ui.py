@@ -1225,23 +1225,35 @@ def runs_page(ctx):
         f'<a class="btn small {"primary" if ctx["state"] == k else ""}" href="/runs{("?state=" + k) if k else ""}">{v}</a>'
         for k, v in tabs
     )
+    def delete_cell(r):
+        if r["state"] not in ("done", "failed"):
+            return '<span class=muted>—</span>'
+        return (f'<button class="btn small" type=submit '
+                f'formaction="/runs/{esc(r["task_id"])}/delete" '
+                f'onclick="return confirm(\'删除这条运行记录？截图和日志会一并删除。\')">删除</button>')
     rows = "".join(
-        f"""<tr><td><a class=mono href="/runs/{esc(r['task_id'])}">{esc(r['task_id'])}</a></td>
+        f"""<tr><td><input type=checkbox name=task_id value="{esc(r['task_id'])}"></td>
+<td><a class=mono href="/runs/{esc(r['task_id'])}">{esc(r['task_id'])}</a></td>
 <td>{'<span class="badge setup">采集</span> ' if r.get('kind') == 'capture' else ''}{esc(r['name'])}</td>
 <td>{'<span class="badge ai">AI</span>' if (r.get('case') or {}).get('mode') == 'ai' else '<span class="badge scripted">脚本</span>'}</td>
 <td>{badge(r['state'])}</td><td>{verdict_badge((r.get('result') or {}).get('verdict',''))}</td>
 <td>{r['attempt']}</td><td>{esc(r['agent_id'] or '-')}</td>
 <td class=mono>{esc(r['mcp_id'] or '-')}</td>
-<td>{fmt_ms(r['elapsed_ms'])}</td><td class=nowrap>{fmt_ts(r['created'])}</td></tr>"""
+<td>{fmt_ms(r['elapsed_ms'])}</td><td class=nowrap>{fmt_ts(r['created'])}</td>
+<td>{delete_cell(r)}</td></tr>"""
         for r in ctx["runs"]
-    ) or "<tr><td colspan=10 class=empty>没有符合条件的运行记录。</td></tr>"
+    ) or "<tr><td colspan=12 class=empty>没有符合条件的运行记录。</td></tr>"
     body = f"""
 <meta http-equiv="refresh" content="3">
+<form method=post action="/runs/delete-selected">
 <div class=toolbar>{tab_html}<span class=spacer></span>
+<button class="btn" type=submit onclick="return confirm('删除选中的运行记录？截图和日志会一并删除。')">删除选中</button>
+<button class="btn" type=submit formaction="/runs/delete-finished" onclick="return confirm('删除全部已结束（完成/失败）的运行记录？该操作不可恢复。')">清空已结束</button>
 <a class="btn" href="/cases">去运行用例</a><span class=muted>每 3 秒自动刷新</span></div>
 <div class=panel><table>
-<tr><th>任务</th><th>用例</th><th>模式</th><th>状态</th><th>AI 判定</th><th>尝试</th>
-<th>执行节点</th><th>MCP</th><th>耗时</th><th>创建时间</th></tr>{rows}</table></div>
+<tr><th></th><th>任务</th><th>用例</th><th>模式</th><th>状态</th><th>AI 判定</th><th>尝试</th>
+<th>执行节点</th><th>MCP</th><th>耗时</th><th>创建时间</th><th>操作</th></tr>{rows}</table></div>
+</form>
 """
     return layout("执行记录", "/runs", body, msg=ctx.get("msg"), err=ctx.get("err"))
 
@@ -1286,7 +1298,10 @@ def run_detail(ctx):
     run = ctx["run"]
     result = run.get("result") or {}
     steps = result.get("steps") or []
-    mode = (run.get("case") or {}).get("mode") or "scripted"
+    case = run.get("case") or {}
+    case_name = case.get("name") or run.get("name") or "-"
+    case_desc = case.get("description") or ""
+    mode = case.get("mode") or "scripted"
     step_rows = ""
     for i, st in enumerate(steps, 1):
         ok = bool(st.get("ok"))
@@ -1374,6 +1389,16 @@ def run_detail(ctx):
     if mode == "ai" and steps:
         freeze_form = (f'<form class=inline method=post action="/runs/{esc(run["task_id"])}/freeze">'
                        f'<button class=btn>固化为脚本用例</button></form>')
+    delete_form = ""
+    if run["state"] in ("done", "failed"):
+        delete_form = (f'<form class=inline method=post action="/runs/{esc(run["task_id"])}/delete" '
+                       f'onsubmit="return confirm(\'删除这条运行记录？截图和日志会一并删除，且不可恢复。\')">'
+                       f'<button class=btn>删除记录</button></form>')
+    case_panel = f"""
+<div class=panel><h2>用例信息</h2><table>
+<tr><th style="width:120px">用例名称</th><td>{esc(case_name)}</td></tr>
+<tr><th>用例描述</th><td>{esc(case_desc) if case_desc else '<span class=muted>（未填写）</span>'}</td></tr>
+</table></div>"""
     profile = ctx.get("profile") or {}
     profile_panel = ""
     summary = result.get("profile_summary") or {}
@@ -1414,7 +1439,7 @@ def run_detail(ctx):
             '<div class=hint>待回传表示执行状态尚待确认；人工重跑前请确认旧任务是否仍在执行。</div></div>')
     body = f"""
 <div class=toolbar><a class=btn href="/runs">← 返回执行记录</a><span class=spacer></span>
-{freeze_form}<a class=btn href="/cases">用例管理</a></div>
+{freeze_form}{delete_form}<a class=btn href="/cases">用例管理</a></div>
 <div class=cards>
   <div class=card><span>状态</span><b style="font-size:18px">{badge(run['state'])}</b></div>
   <div class=card><span>模式</span><b style="font-size:16px">{'AI' if mode == 'ai' else '脚本'}</b></div>
@@ -1424,6 +1449,7 @@ def run_detail(ctx):
   <div class=card><span>MCP</span><b style="font-size:15px">{esc(mcp_name)}</b></div>
   <div class=card><span>创建</span><b style="font-size:13px">{fmt_ts(run['created'])}</b></div>
 </div>
+{case_panel}
 {remote_panel}
 {profile_panel}
 {verdict_panel}

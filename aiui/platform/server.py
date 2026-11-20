@@ -14,10 +14,12 @@
   · 默认只绑 127.0.0.1，不提供鉴权。跨机使用前必须加 token + 白名单。
 """
 import argparse
+import hashlib
 import heapq
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -569,6 +571,25 @@ class Platform:
                 "elapsed_ms": (t["result"] or {}).get("elapsed_ms") if t["result"] else None,
                 "steps": len((t["result"] or {}).get("steps") or []),
             } for t in self.tasks.values()]
+
+    def delete_run(self, task_id):
+        """删除一条已结束的运行记录、日志和截图；在飞任务拒绝删除。"""
+        task = self.tasks.get(task_id)
+        run = task or self.store.get_run(task_id)
+        if not run:
+            return False
+        if run.get("state") not in ("done", "failed"):
+            raise ValueError("运行尚未结束，不能删除")
+        with self.lock:
+            self.tasks.pop(task_id, None)
+            self.queue = [item for item in self.queue if item[2] != task_id]
+            deleted = self.store.delete_run(task_id)
+        if deleted:
+            shots = Path(screenshots.SCREENSHOTS_DIR) / hashlib.sha256(
+                str(task_id).encode("utf-8")).hexdigest()
+            shutil.rmtree(shots, ignore_errors=True)
+            print(f"[platform] 已删除运行记录: {task_id}", file=sys.stderr, flush=True)
+        return deleted
 
 
 # ══════════════════════ 本地 Agent 进程管理 ══════════════════════
@@ -1384,6 +1405,14 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as e:
                 return self._json({"ok": False, "error": str(e)}, 400)
             return self._json({"ok": True, "case": case}, 201)
+        if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "delete":
+            try:
+                deleted = P.delete_run(parts[2])
+            except ValueError as e:
+                return self._json({"ok": False, "error": str(e)}, 400)
+            if not deleted:
+                return self._json({"ok": False, "error": "运行记录不存在"}, 404)
+            return self._json({"ok": True})
         if len(parts) == 5 and parts[:3] == ["api", "remote", "nodes"] and parts[4] == "slots":
             # 管理监听器专属：只允许修改平台授权上限，token/CIDR/MCP 仍离线维护。
             if not P.remote:
@@ -1518,6 +1547,31 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"error": "not found"}, 404)
 
     def _page_post(self, parts):
+        if len(parts) == 3 and parts[0] == "runs" and parts[2] == "delete":
+            try:
+                deleted = P.delete_run(parts[1])
+            except ValueError as e:
+                return self._flash(f"/runs/{parts[1]}", err=str(e))
+            if not deleted:
+                return self._flash("/runs", err="运行记录不存在")
+            return self._flash("/runs", msg="运行记录已删除（含日志与截图）")
+        if parts in (["runs", "delete-selected"], ["runs", "delete-finished"]):
+            if parts[-1] == "delete-finished":
+                ids = [r["task_id"] for r in STORE.list_runs(100000)
+                       if r.get("state") in ("done", "failed")]
+            else:
+                ids = self._form().get("task_id") or []
+            deleted = skipped = 0
+            for tid in ids:
+                try:
+                    if P.delete_run(tid):
+                        deleted += 1
+                except ValueError:
+                    skipped += 1
+            return self._flash(
+                "/runs",
+                msg=f"已删除 {deleted} 条运行记录" if deleted else "",
+                err=f"{skipped} 条运行尚未结束，未删除" if skipped else "")
         if len(parts) == 3 and parts[0] == "runs" and parts[2] == "freeze":
             try:
                 case = freeze_run(parts[1])
