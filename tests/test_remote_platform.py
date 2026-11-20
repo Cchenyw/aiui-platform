@@ -178,6 +178,16 @@ class RemotePlatformTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             coordinator.update_grant('missing', 1)
 
+    def test_heartbeat_reports_effective_slots_after_grant_change(self):
+        self.register()  # 声明 99，授权 1
+        self.assertEqual(self.r.heartbeat('n1', self.body)['slots'], 1)
+        self.r.update_grant('n1', 3)
+        self.assertEqual(self.r.heartbeat('n1', self.body)['slots'], 3)
+        # 声明低于授权时仍以声明封顶
+        low = {**self.body, 'slots': 2}
+        self.r.register('n1', low)
+        self.assertEqual(self.r.heartbeat('n1', low)['slots'], 2)
+
     def test_restart_machine_binding_change_blocks_claim_but_accepts_old_result(self):
         import copy
         self.register(); self.task()
