@@ -217,6 +217,10 @@ class Platform:
                 tid = c.get("id") or c.get("task_id") or f"T{len(self.tasks)+1:03d}-{uuid.uuid4().hex}"
                 if tid in self.tasks or self.store.get_run(tid):
                     raise ValueError("任务 ID 已存在，不能覆盖历史或在飞任务")
+                try:
+                    case_retry = int(c.get("max_retry", -1))
+                except Exception:
+                    case_retry = -1
                 case_snapshot = {
                     "case_id": c.get("case_id", ""), "name": c.get("name", tid),
                     "description": c.get("description", ""), "tags": c.get("tags", ""),
@@ -226,16 +230,27 @@ class Platform:
                     "instruction": c.get("instruction") or "",
                     "expected": c.get("expected") or "",
                     "max_steps": int(c.get("max_steps") or limits.AI_DEFAULT_MAX_STEPS),
+                    "navigation_hint": c.get("navigation_hint") or "",
+                    "max_retry": case_retry,
+                    "side_effect": bool(c.get("side_effect")),
                     "kind": c.get("kind") or "test",
                     "profile_id": c.get("profile_id") or "",
                 }
+                if case_snapshot["side_effect"]:
+                    effective_retry = 0
+                elif max_retry is not None and int(max_retry) >= 0:
+                    effective_retry = int(max_retry)
+                elif case_snapshot["max_retry"] >= 0:
+                    effective_retry = case_snapshot["max_retry"]
+                else:
+                    effective_retry = self.max_retry
                 t = {
                     "task_id": tid, "name": case_snapshot["name"], "case": case_snapshot,
                     "case_id": case_snapshot["case_id"], "mcp_id": mcp["id"], "mcp": mcp,
                     "state": "queued", "attempt": 0, "agent": None,
                     "created": now(), "started": None, "finished": None,
                     "result": None, "error": "", "timeline": [],
-                    "max_retry": self.max_retry if max_retry is None else int(max_retry),
+                    "max_retry": effective_retry,
                     "kind": "test", "profile": profile,
                     "target_node_id": target_node_id or c.get("target_node_id") or "",
                     "profile_id": (profile or {}).get("profile_id", ""),
@@ -815,11 +830,16 @@ def normalize_steps(value):
         for k in ("assert_contains", "assert_not_contains"):
             if k in s and not isinstance(s[k], str):
                 raise ValueError(f"第 {i} 步 {k} 必须是字符串")
+        if "commit" in s and not isinstance(s["commit"], bool):
+            raise ValueError(f"第 {i} 步 commit 必须是布尔值")
         ns = dict(s)
         ns["tool"] = tool
         ns["args"] = args
         out.append(ns)
     return out
+
+
+NAVIGATION_HINT_MAX_CHARS = 8000
 
 
 def validate_case(data, existing=None):
@@ -832,6 +852,20 @@ def validate_case(data, existing=None):
         raise ValueError("用例模式必须是 scripted / ai")
     instruction = str(data.get("instruction", base.get("instruction", "")) or "").strip()
     expected = str(data.get("expected", base.get("expected", "")) or "").strip()
+    navigation_hint = str(data.get("navigation_hint",
+                                   base.get("navigation_hint", "")) or "").strip()
+    if len(navigation_hint) > NAVIGATION_HINT_MAX_CHARS:
+        raise ValueError(f"站点导航提示不能超过 {NAVIGATION_HINT_MAX_CHARS} 字符")
+    try:
+        max_retry = int(data.get("max_retry", base.get("max_retry", -1)))
+    except Exception:
+        raise ValueError("最大重试次数必须是整数")
+    if not -1 <= max_retry <= 10:
+        raise ValueError("最大重试次数必须在 -1~10 之间（-1 表示使用平台默认）")
+    side_effect = _to_bool(data.get("side_effect", base.get("side_effect", False)), False)
+    if side_effect:
+        # 提交/删除类用例不能自动重试，避免重复产生副作用。
+        max_retry = 0
     try:
         max_steps = int(data.get("max_steps",
                                  base.get("max_steps", limits.AI_DEFAULT_MAX_STEPS)))
@@ -896,6 +930,9 @@ def validate_case(data, existing=None):
         "instruction": instruction,
         "expected": expected,
         "max_steps": max_steps,
+        "navigation_hint": navigation_hint,
+        "max_retry": max_retry,
+        "side_effect": side_effect,
         "kind": kind,
         "profile_id": profile_id,
         "enabled": _to_bool(data.get("enabled", base.get("enabled", True)), True),
@@ -1007,7 +1044,8 @@ def validate_agent(data, existing=None, aid=None):
 
 
 OBSERVATION_TOOLS = {"snapshot", "page_text", "playwright_get_visible_text",
-                     "playwright_get_visible_html", "browser_snapshot"}
+                     "playwright_get_visible_html", "browser_snapshot",
+                     "inspect_page", "expect_visible_text"}
 
 
 def freeze_run(task_id):
@@ -1038,6 +1076,9 @@ def freeze_run(task_id):
         "steps": steps,
         "mode": "scripted",
         "enabled": True,
+        "side_effect": bool(case.get("side_effect")),
+        "max_retry": (0 if case.get("side_effect")
+                      else int(case.get("max_retry", -1))),
     }
     return STORE.create_case(validate_case(data))
 
@@ -1516,7 +1557,8 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 4 and parts[:2] == ["api", "cases"] and parts[3] == "run":
             data = self._json_body()
             try:
-                ids = run_cases([parts[2]], target_node_id=data.get("target_node_id"))
+                ids = run_cases([parts[2]], max_retry=data.get("max_retry"),
+                                target_node_id=data.get("target_node_id"))
             except ValueError as e:
                 return self._json({"ok": False, "error": str(e)}, 400)
             return self._json({"ok": True, "task_ids": ids}, 201)
@@ -1914,6 +1956,9 @@ class Handler(BaseHTTPRequestHandler):
             "instruction": _fget(form, "instruction"),
             "expected": _fget(form, "expected"),
             "max_steps": _fget(form, "max_steps", limits.AI_DEFAULT_MAX_STEPS),
+            "navigation_hint": _fget(form, "navigation_hint"),
+            "max_retry": _fget(form, "max_retry", -1),
+            "side_effect": "side_effect" in form,
             "kind": _fget(form, "kind", "test"),
             "profile_id": _fget(form, "profile_id"),
             "enabled": "enabled" in form,

@@ -560,6 +560,10 @@ def case_form(ctx):
     action = "/cases/new" if is_new else f"/cases/{esc(c['case_id'])}/edit"
     title = "新建用例" if is_new else f"编辑用例 · {c.get('name','')}"
     enabled = " checked" if c.get("enabled", True) else ""
+    try:
+        max_retry_value = int(c.get("max_retry", -1))
+    except Exception:
+        max_retry_value = -1
     ai_panel_style = "" if mode == "ai" else "display:none"
     scripted_panel_style = "display:none" if mode == "ai" else ""
     budget_ctx = ctx.get("budget") or {}
@@ -607,6 +611,16 @@ def case_form(ctx):
 <label style="display:flex;gap:8px;align-items:center;margin-top:8px">
 <input type=checkbox name=enabled value=1{enabled}> 启用（停用的用例不会出现在“运行全部”里）</label></label>
 </div>
+<div class=grid2>
+<label class=field><span>最大重试次数</span>
+<input type=number name=max_retry min=-1 max=10 value="{esc(max_retry_value)}">
+<div class=hint>-1 表示使用平台默认（通常 2 次）；0 表示不自动重试。提交/删除类用例建议勾选右侧“副作用用例”。</div></label>
+<label class=field><span>副作用用例</span>
+<label style="display:flex;gap:8px;align-items:center;margin-top:8px">
+<input type=checkbox name=side_effect value=1{" checked" if c.get("side_effect") else ""}>
+提交/删除后禁止自动重试</label>
+<div class=hint>勾选后平台强制 max_retry=0；执行器在提交动作成功后也不会因后续校验失败而重跑。</div></label>
+</div>
 </div>
 <div class=panel id=ai-panel style="{ai_panel_style}">
 <h2>自然语言用例 / 预期结果</h2>
@@ -617,6 +631,9 @@ def case_form(ctx):
 <label class=field><span>预期结果 *</span>
 <textarea name=expected rows=3 spellcheck=false placeholder="例如：页面出现“登录成功，欢迎 admin”。">{esc(c.get('expected',''))}</textarea>
 <div class=hint>判定器会对照预期和执行证据，给出 passed / failed / bug_suspected / inconclusive。</div></label>
+<label class=field><span>站点导航提示（菜单图谱，可选）</span>
+<textarea name=navigation_hint rows=8 spellcheck=false placeholder="例如：&#10;目标：柜台委托 > 盘后固定价格交易&#10;操作：先点顶部“柜台委托”，再点“盘后固定价格交易”&#10;预期面包屑：柜台委托 / 盘后固定价格交易&#10;页面特征：持仓单元、证券代码、委托价格、提交委托">{esc(c.get('navigation_hint',''))}</textarea>
+<div class=hint>只写菜单层级、面包屑和页面特征；不要把业务 URL 写进来，也不要要求 AI 直接跳转。AI 仍应像用户一样逐级点击并验证页面。不要写入账号、密码或 Token。</div></label>
 <label class=field><span>最大规划步数</span>
 <input type=number name=max_steps min=1 max="{max_steps_ceiling}" value="{esc(int(c.get('max_steps', limits.AI_DEFAULT_MAX_STEPS)))}">
 <div class=hint>上限 {max_steps_ceiling}；连续 3 次相同动作或总 token 超过 {token_limit:,} 会自动终止。</div></label>
@@ -630,6 +647,7 @@ def case_form(ctx):
 <div class=hint>
 每步格式：<code>{{"tool": "工具名", "args": {{...}}}}</code>。
 可选 <code>assert_contains</code> / <code>assert_not_contains</code> 对工具返回文本做断言（适合 Playwright MCP）。
+可选 <code>"commit": true</code> 标记提交步骤：该步成功后再失败不会自动重试；提交/删除类用例建议同时勾选“副作用用例”。
 内置工具：<code>navigate</code> <code>type_text</code> <code>click</code> <code>expect_text</code> <code>page_text</code> <code>snapshot</code>。
 Playwright MCP 的工具名以“探测工具”结果为准：ExecuteAutomation 用 <code>playwright_*</code>，官方 @playwright/mcp 用 <code>browser_*</code>。
 示例按钮会同步选择对应的 MCP；手动切换 MCP 或重新探测不会转换已有步骤。
@@ -1301,6 +1319,8 @@ def run_detail(ctx):
     case = run.get("case") or {}
     case_name = case.get("name") or run.get("name") or "-"
     case_desc = case.get("description") or ""
+    navigation_hint = case.get("navigation_hint") or ""
+    side_effect = bool(case.get("side_effect"))
     mode = case.get("mode") or "scripted"
     step_rows = ""
     for i, st in enumerate(steps, 1):
@@ -1311,6 +1331,9 @@ def run_detail(ctx):
         thought = st.get("thought") or ""
         thought_html = (f'<details><summary>{esc(thought[:180])}</summary><pre>{esc(thought)}</pre></details>'
                         if len(thought) > 180 else esc(thought) or "-")
+        step_warnings = st.get("user_level_warnings") or []
+        warn_html = (f'<div class=hint style="color:#b36b00">用户级操作告警：'
+                     f'{esc("；".join(step_warnings))}</div>' if step_warnings else "")
         tool = st.get("tool", "")
         tool_label = "finish" if tool == "__finish__" else tool
         image = st.get("screenshot") or {}
@@ -1328,7 +1351,7 @@ def run_detail(ctx):
 <td style="max-width:300px;word-break:break-word;font-size:12px">{thought_html}</td>
 <td class=mono style="max-width:340px;word-break:break-all">{esc(json.dumps(st.get('args') or {}, ensure_ascii=False))}</td>
 <td>{'<span class="badge done">通过</span>' if ok else '<span class="badge failed">失败</span>'}</td>
-<td class=mono style="max-width:420px;word-break:break-all">{esc(short)}{extra}</td>
+<td class=mono style="max-width:420px;word-break:break-all">{esc(short)}{extra}{warn_html}</td>
 <td class="shot-cell">{shot}</td></tr>"""
     if not step_rows:
         step_rows = "<tr><td colspan=7 class=empty>暂无步骤明细（任务未开始或结果未回传）。</td></tr>"
@@ -1398,7 +1421,17 @@ def run_detail(ctx):
 <div class=panel><h2>用例信息</h2><table>
 <tr><th style="width:120px">用例名称</th><td>{esc(case_name)}</td></tr>
 <tr><th>用例描述</th><td>{esc(case_desc) if case_desc else '<span class=muted>（未填写）</span>'}</td></tr>
+<tr><th>副作用用例</th><td>{'是（禁止自动重试）' if side_effect else '否'}</td></tr>
+{f'<tr><th>站点导航提示</th><td><pre style="white-space:pre-wrap;margin:0">{esc(navigation_hint)}</pre></td></tr>' if navigation_hint else ''}
 </table></div>"""
+    audit_warnings = result.get("user_level_warnings") or []
+    audit_panel = ""
+    if audit_warnings:
+        items = "".join(f"<li>{esc(w)}</li>" for w in audit_warnings[:20])
+        audit_panel = (f'<div class="panel"><h2>用户级操作告警</h2>'
+                       f'<div class="msg info"><ul>{items}</ul>'
+                       f'<div class=hint>这些动作未被拦截，但属于直接 URL 跳转或 JS 直接改值/点击，'
+                       f'会降低“像用户一样操作”的可信度；请结合步骤记录复核。</div></div></div>')
     profile = ctx.get("profile") or {}
     profile_panel = ""
     summary = result.get("profile_summary") or {}
@@ -1450,6 +1483,7 @@ def run_detail(ctx):
   <div class=card><span>创建</span><b style="font-size:13px">{fmt_ts(run['created'])}</b></div>
 </div>
 {case_panel}
+{audit_panel}
 {remote_panel}
 {profile_panel}
 {verdict_panel}
