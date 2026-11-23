@@ -109,6 +109,9 @@ class Store:
                     instruction TEXT NOT NULL DEFAULT '',
                     expected    TEXT NOT NULL DEFAULT '',
                     max_steps   INTEGER NOT NULL DEFAULT 12,
+                    navigation_hint TEXT NOT NULL DEFAULT '',
+                    max_retry   INTEGER NOT NULL DEFAULT -1,
+                    side_effect INTEGER NOT NULL DEFAULT 0,
                     kind        TEXT NOT NULL DEFAULT 'test',
                     profile_id  TEXT NOT NULL DEFAULT '',
                     enabled     INTEGER NOT NULL DEFAULT 1,
@@ -235,6 +238,9 @@ class Store:
             "instruction": "TEXT NOT NULL DEFAULT ''",
             "expected": "TEXT NOT NULL DEFAULT ''",
             "max_steps": "INTEGER NOT NULL DEFAULT 12",
+            "navigation_hint": "TEXT NOT NULL DEFAULT ''",
+            "max_retry": "INTEGER NOT NULL DEFAULT -1",
+            "side_effect": "INTEGER NOT NULL DEFAULT 0",
             "kind": "TEXT NOT NULL DEFAULT 'test'",
             "profile_id": "TEXT NOT NULL DEFAULT ''",
         }
@@ -308,6 +314,9 @@ class Store:
         d["instruction"] = d.get("instruction") or ""
         d["expected"] = d.get("expected") or ""
         d["max_steps"] = int(d.get("max_steps") or limits.AI_DEFAULT_MAX_STEPS)
+        d["navigation_hint"] = d.get("navigation_hint") or ""
+        d["max_retry"] = int(d.get("max_retry", -1))
+        d["side_effect"] = bool(d.get("side_effect"))
         d["kind"] = d.get("kind") or "test"
         d["profile_id"] = d.get("profile_id") or ""
         d["step_count"] = len(d["steps"])
@@ -343,14 +352,17 @@ class Store:
             self.conn.execute(
                 """INSERT INTO cases
                    (case_id,name,description,tags,mcp_id,timeout_s,steps_json,
-                    mode,instruction,expected,max_steps,kind,profile_id,
-                    enabled,created,updated)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    mode,instruction,expected,max_steps,navigation_hint,max_retry,
+                    side_effect,kind,profile_id,enabled,created,updated)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (cid, data["name"], data.get("description", ""), data.get("tags", ""),
                  data.get("mcp_id", ""), float(data.get("timeout_s", 60)),
                  _dumps(data.get("steps", [])), data.get("mode", "scripted"),
                  data.get("instruction", ""), data.get("expected", ""),
                  int(data.get("max_steps", limits.AI_DEFAULT_MAX_STEPS)),
+                 data.get("navigation_hint", ""),
+                 int(data.get("max_retry", -1)),
+                 1 if data.get("side_effect") else 0,
                  data.get("kind", "test"),
                  data.get("profile_id", ""),
                  1 if data.get("enabled", True) else 0, t, t),
@@ -374,6 +386,9 @@ class Store:
             "expected": data.get("expected", cur.get("expected", "")),
             "max_steps": int(data.get("max_steps",
                                        cur.get("max_steps", limits.AI_DEFAULT_MAX_STEPS))),
+            "navigation_hint": data.get("navigation_hint", cur.get("navigation_hint", "")),
+            "max_retry": int(data.get("max_retry", cur.get("max_retry", -1))),
+            "side_effect": bool(data.get("side_effect", cur.get("side_effect", False))),
             "kind": data.get("kind", cur.get("kind", "test")),
             "profile_id": data.get("profile_id", cur.get("profile_id", "")),
             "enabled": data.get("enabled", cur["enabled"]),
@@ -382,10 +397,13 @@ class Store:
             self.conn.execute(
                 """UPDATE cases SET name=?,description=?,tags=?,mcp_id=?,timeout_s=?,
                    steps_json=?,mode=?,instruction=?,expected=?,max_steps=?,
+                   navigation_hint=?,max_retry=?,side_effect=?,
                    kind=?,profile_id=?,enabled=?,updated=? WHERE case_id=?""",
                 (merged["name"], merged["description"], merged["tags"], merged["mcp_id"],
                  merged["timeout_s"], _dumps(merged["steps"]), merged["mode"],
                  merged["instruction"], merged["expected"], merged["max_steps"],
+                 merged["navigation_hint"], merged["max_retry"],
+                 1 if merged["side_effect"] else 0,
                  merged["kind"], merged["profile_id"],
                  1 if merged["enabled"] else 0, now(), case_id),
             )
